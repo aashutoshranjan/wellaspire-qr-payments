@@ -158,7 +158,7 @@ function CheckoutGrid({ amount }: { amount: number }) {
   return (
     <div className="grid gap-8 lg:grid-cols-[1.05fr_1fr] lg:gap-12">
       <section aria-label="UPI payment QR code" className="order-1">
-        <QrPanel rotation={rotation} />
+        <QrPanel rotation={rotation} listState={qrList} />
       </section>
       <section aria-label="Order and confirmation" className="order-2">
         <OrderPanel amount={amount} rotation={rotation} />
