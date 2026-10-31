@@ -14,7 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      payment_submissions: {
+        Row: {
+          amount_inr: number
+          created_at: string
+          id: string
+          payer_phone: string
+          qr_slot: string
+          status: string
+          utr: string
+        }
+        Insert: {
+          amount_inr: number
+          created_at?: string
+          id: string
+          payer_phone: string
+          qr_slot: string
+          status?: string
+          utr: string
+        }
+        Update: {
+          amount_inr?: number
+          created_at?: string
+          id?: string
+          payer_phone?: string
+          qr_slot?: string
+          status?: string
+          utr?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
