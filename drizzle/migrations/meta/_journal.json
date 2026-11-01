@@ -8,6 +8,13 @@
       "when": 1793476429653,
       "tag": "0000_create_payment_submissions",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793531669301,
+      "tag": "0001_enrollment_details_fields",
+      "breakpoints": true
     }
   ]
 }

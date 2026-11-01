@@ -16,31 +16,52 @@ export type Database = {
     Tables: {
       payment_submissions: {
         Row: {
-          amount_inr: number
+          amount_inr: number | null
+          batch_code: string | null
+          cohort_date: string | null
+          contact_number: string | null
           created_at: string
+          email: string | null
+          full_name: string | null
           id: string
           payer_phone: string
+          position_applied: string | null
           qr_slot: string
+          screenshot_path: string | null
           status: string
-          utr: string
+          utr: string | null
         }
         Insert: {
-          amount_inr: number
+          amount_inr?: number | null
+          batch_code?: string | null
+          cohort_date?: string | null
+          contact_number?: string | null
           created_at?: string
+          email?: string | null
+          full_name?: string | null
           id: string
           payer_phone: string
+          position_applied?: string | null
           qr_slot: string
+          screenshot_path?: string | null
           status?: string
-          utr: string
+          utr?: string | null
         }
         Update: {
-          amount_inr?: number
+          amount_inr?: number | null
+          batch_code?: string | null
+          cohort_date?: string | null
+          contact_number?: string | null
           created_at?: string
+          email?: string | null
+          full_name?: string | null
           id?: string
           payer_phone?: string
+          position_applied?: string | null
           qr_slot?: string
+          screenshot_path?: string | null
           status?: string
-          utr?: string
+          utr?: string | null
         }
         Relationships: []
       }
