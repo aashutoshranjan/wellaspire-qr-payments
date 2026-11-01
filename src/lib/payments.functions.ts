@@ -3,9 +3,20 @@ import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 
 const submissionSchema = z.object({
-  amount: z.number().positive().max(10_000_000),
-  utr: z.string().regex(/^\d{12}$/, "UTR must be exactly 12 digits"),
-  payerPhone: z.string().regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit Indian mobile number"),
+  fullName: z.string().trim().min(2).max(120),
+  email: z
+    .string()
+    .trim()
+    .max(200)
+    .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Enter a valid email address"),
+  contactNumber: z.string().regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit Indian mobile number"),
+  position: z.string().trim().min(2).max(200),
+  cohortDate: z.string().trim().min(1).max(80),
+  batchCode: z.string().trim().min(1).max(80),
+  screenshotPath: z
+    .string()
+    .regex(/^[\w-]+\.(jpe?g|png|pdf)$/, "Invalid screenshot path")
+    .optional(),
   qrSlot: z.string().min(1).max(100),
 });
 
@@ -43,9 +54,13 @@ export const submitPaymentConfirmation = createServerFn({ method: "POST" })
 
     const { error } = await supabasePublic.from("payment_submissions").insert({
       id,
-      amount_inr: data.amount,
-      utr: data.utr,
-      payer_phone: data.payerPhone,
+      full_name: data.fullName,
+      email: data.email,
+      contact_number: data.contactNumber,
+      position_applied: data.position,
+      cohort_date: data.cohortDate,
+      batch_code: data.batchCode,
+      screenshot_path: data.screenshotPath ?? null,
       qr_slot: data.qrSlot,
     });
 

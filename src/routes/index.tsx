@@ -5,46 +5,41 @@ import {
   AlertCircle,
   BadgeCheck,
   CheckCircle2,
-  Clock3,
   Copy,
+  FileText,
   Loader2,
   Lock,
+  Mail,
+  MessageCircle,
   QrCode,
   RefreshCw,
   ShieldCheck,
   Smartphone,
+  Upload,
 } from "lucide-react";
 import { submitPaymentConfirmation, type SubmitResult } from "@/lib/payments.functions";
+import { supabase } from "@/integrations/supabase/client";
 
 type QrEntry = { id: string; label: string; image: string; active: boolean };
 
 const ROTATION_MS = 3 * 60 * 60 * 1000;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-const DEFAULT_AMOUNT = 1500;
+const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024;
 
 export const Route = createFileRoute("/")({
-  validateSearch: (search: Record<string, unknown>) => {
-    const raw = search.amount;
-    const parsed = typeof raw === "string" || typeof raw === "number" ? Number(raw) : NaN;
-    const amount =
-      Number.isFinite(parsed) && parsed > 0
-        ? Math.min(Math.round(parsed * 100) / 100, 10_000_000)
-        : undefined;
-    return { amount };
-  },
   head: () => ({
     meta: [
-      { title: "Wellaspire Pay — Secure UPI Checkout" },
+      { title: "Wellaspire Pay — Internship Enrollment" },
       {
         name: "description",
         content:
-          "Pay Wellaspire Technologies instantly via UPI. Scan the secure rotating QR code and confirm your transaction with its reference number.",
+          "Complete your internship enrollment. Scan the secure UPI QR to pay the enrollment fee from your Welcome Letter, then confirm your participation with your enrollment details.",
       },
-      { property: "og:title", content: "Wellaspire Pay — Secure UPI Checkout" },
+      { property: "og:title", content: "Wellaspire Pay — Internship Enrollment" },
       {
         property: "og:description",
         content:
-          "Scan, pay and confirm in under a minute. 100% Payment Protected by Wellaspire Technologies on a 256-bit encrypted checkout.",
+          "Confirm your participation: pay via UPI, share your enrollment details and payment screenshot, and receive your receipt, confirmation email and login credentials.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -53,28 +48,7 @@ export const Route = createFileRoute("/")({
   component: CheckoutPage,
 });
 
-function formatAmount(value: number) {
-  const fractionDigits = Number.isInteger(value) ? 0 : 2;
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
-  }).format(value);
-}
-
-function formatCountdown(ms: number) {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = String(Math.floor(total / 3600)).padStart(2, "0");
-  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
-  const s = String(total % 60).padStart(2, "0");
-  return `${h}:${m}:${s}`;
-}
-
 function CheckoutPage() {
-  const { amount: routeAmount } = Route.useSearch();
-  const amount = routeAmount ?? DEFAULT_AMOUNT;
-
   return (
     <div className="relative min-h-screen overflow-hidden bg-background font-sans text-foreground">
       {/* Ambient background */}
@@ -87,7 +61,7 @@ function CheckoutPage() {
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-6 sm:px-8">
         <BrandHeader />
         <main className="mt-8 flex-1">
-          <CheckoutGrid amount={amount} />
+          <CheckoutGrid />
         </main>
         <PageFooter />
       </div>
@@ -117,9 +91,8 @@ function BrandHeader() {
   );
 }
 
-function CheckoutGrid({ amount }: { amount: number }) {
+function CheckoutGrid() {
   const [qrList, setQrList] = useState<QrListState>({ status: "loading" });
-  const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,28 +113,21 @@ function CheckoutGrid({ amount }: { amount: number }) {
     };
   }, []);
 
-  useEffect(() => {
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
   const rotation = useMemo(() => {
-    if (qrList.status !== "ready" || now === null) return null;
-    const istMs = now + IST_OFFSET_MS;
-    const block = Math.floor((((istMs / 3_600_000) % 24) + 24) % 24 / 3);
+    if (qrList.status !== "ready") return null;
+    const istMs = Date.now() + IST_OFFSET_MS;
+    const block = Math.floor(((((istMs / 3_600_000) % 24) + 24) % 24) / 3);
     const current = qrList.list[block % qrList.list.length];
-    const remainingMs = ROTATION_MS - (istMs % ROTATION_MS);
-    return { block, current, remainingMs, total: qrList.list.length };
-  }, [qrList, now]);
+    return { block, current, total: qrList.list.length };
+  }, [qrList]);
 
   return (
     <div className="grid gap-8 lg:grid-cols-[1.05fr_1fr] lg:gap-12">
       <section aria-label="UPI payment QR code" className="order-1">
-        <QrPanel rotation={rotation} listState={qrList} />
+        <EnrollmentIntro rotation={rotation} listState={qrList} />
       </section>
-      <section aria-label="Order and confirmation" className="order-2">
-        <OrderPanel amount={amount} rotation={rotation} />
+      <section aria-label="Enrollment confirmation" className="order-2">
+        <OrderPanel rotation={rotation} />
       </section>
     </div>
   );
@@ -172,132 +138,181 @@ type QrListState = { status: "loading" } | { status: "error" } | { status: "read
 type RotationState = {
   block: number;
   current: QrEntry;
-  remainingMs: number;
   total: number;
 } | null;
 
-function QrPanel({ rotation }: { rotation: RotationState }) {
-  if (rotation === null) {
-    const isError = qrListStatus() === "error";
-    return (
-      <div className="flex min-h-[26rem] flex-col items-center justify-center rounded-3xl border border-border bg-card/70 p-8 text-center backdrop-blur">
-        {isError ? (
-          <>
-            <AlertCircle className="size-10 text-destructive" />
-            <p className="mt-4 font-display font-semibold">Couldn't load the payment QR</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Please refresh the page to try again.
-            </p>
-          </>
-        ) : (
-          <>
-            <Loader2 className="size-8 animate-spin text-gold" />
-            <p className="mt-4 text-sm text-muted-foreground">Preparing your secure QR…</p>
-          </>
-        )}
-      </div>
-    );
-  }
-
+function EnrollmentIntro({
+  rotation,
+  listState,
+}: {
+  rotation: RotationState;
+  listState: QrListState;
+}) {
   return (
-    <div className="relative">
-      {/* Rotating halo glow */}
-      <div aria-hidden className="qr-halo absolute -inset-4 rounded-[2.5rem] opacity-60" />
-      <div aria-hidden className="qr-glow-soft absolute -inset-10 rounded-full" />
+    <div>
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gold">
+          Confirm Your Participation
+        </p>
+        <h1 className="mt-2 font-display text-3xl font-bold leading-tight tracking-tight sm:text-4xl">
+          Complete Your Internship Enrollment
+        </h1>
+      </div>
 
-      <div className="relative rounded-3xl border border-gold/25 bg-card/80 p-6 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-8">
-        <div className="flex items-center justify-between gap-3">
-          <p className="font-display text-sm font-semibold uppercase tracking-[0.18em] text-gold">
-            UPI QR · Live
+      <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
+        To secure your place in the internship program, kindly complete your enrollment by paying
+        the one-time Internship Enrollment Fee mentioned in your{" "}
+        <span className="font-semibold text-foreground">Welcome Letter</span>. Please verify the
+        amount in your Welcome Letter before making the payment.
+      </p>
+
+      <div className="mt-5 grid gap-2 sm:grid-cols-2">
+        <TrustBadge
+          icon={<ShieldCheck className="size-4 text-gold" />}
+          title="Secure UPI"
+          detail="100% Payment Protected"
+        />
+        <TrustBadge
+          icon={<BadgeCheck className="size-4 text-gold" />}
+          title="Verified Process"
+          detail="Verified within 1 hour"
+        />
+      </div>
+
+      <div className="relative mt-8">
+        {/* Rotating halo glow */}
+        <div aria-hidden className="qr-halo absolute -inset-4 rounded-[2.5rem] opacity-60" />
+        <div aria-hidden className="qr-glow-soft absolute -inset-10 rounded-full" />
+
+        <div className="relative rounded-3xl border border-gold/25 bg-card/80 p-6 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-8">
+          <p className="text-center font-display text-sm font-semibold uppercase tracking-[0.18em] text-gold">
+            Pay via UPI · Scan to Pay
           </p>
-          <span className="flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-[11px] font-semibold text-secondary-foreground">
-            <span className="relative flex size-2">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-gold opacity-60" />
-              <span className="relative inline-flex size-2 rounded-full bg-gold" />
-            </span>
-            Slot {rotation.block % rotation.total + 1} of {rotation.total}
-          </span>
-        </div>
 
-        <div className="relative mt-6">
-          <div className="relative overflow-hidden rounded-2xl bg-qr-surface p-5 shadow-inner">
-            <img
-              src={rotation.current.image}
-              alt={`UPI payment QR code for ${rotation.current.label}`}
-              className="mx-auto block w-full max-w-[320px]"
-              width={320}
-              height={320}
-            />
-            {/* Scan guides */}
-            <span aria-hidden className="scan-guide left-2 top-2 border-l-2 border-t-2" />
-            <span aria-hidden className="scan-guide right-2 top-2 border-r-2 border-t-2" />
-            <span aria-hidden className="scan-guide bottom-2 left-2 border-b-2 border-l-2" />
-            <span aria-hidden className="scan-guide bottom-2 right-2 border-b-2 border-r-2" />
+          <div className="relative mt-6">
+            <div className="relative overflow-hidden rounded-2xl bg-qr-surface p-5 shadow-inner">
+              {listState.status === "error" ? (
+                <div className="flex flex-col items-center gap-3 py-8 text-center">
+                  <AlertCircle className="size-8 text-destructive" />
+                  <p className="text-sm font-medium">Couldn't load the payment QR</p>
+                  <p className="text-xs text-muted-foreground">
+                    Please refresh the page to try again.
+                  </p>
+                </div>
+              ) : listState.status === "loading" || rotation === null ? (
+                <div className="flex flex-col items-center gap-3 py-8 text-center">
+                  <Loader2 className="size-7 animate-spin text-gold" />
+                  <p className="text-xs text-muted-foreground">Preparing your secure QR…</p>
+                </div>
+              ) : (
+                <>
+                  <img
+                    src={rotation.current.image}
+                    alt={`Internship enrollment payment QR code for ${rotation.current.label}`}
+                    className="mx-auto block w-full max-w-[320px]"
+                    width={320}
+                    height={320}
+                  />
+                  {/* Scan guides */}
+                  <span aria-hidden className="scan-guide left-2 top-2 border-l-2 border-t-2" />
+                  <span aria-hidden className="scan-guide right-2 top-2 border-r-2 border-t-2" />
+                  <span aria-hidden className="scan-guide bottom-2 left-2 border-b-2 border-l-2" />
+                  <span aria-hidden className="scan-guide bottom-2 right-2 border-b-2 border-r-2" />
+                </>
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="mt-6 space-y-3">
-          <p className="text-center text-sm leading-relaxed text-muted-foreground">
-            Scan this QR code using any UPI App
-            <span className="mt-0.5 block font-medium text-foreground">
-              (Google Pay, PhonePe, Paytm, BHIM)
-            </span>
-          </p>
-          <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
-            <Clock3 className="size-3.5 shrink-0 text-gold" />
-            <span>
-              Next QR rotation in:{" "}
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {formatCountdown(rotation.remainingMs)}
-              </span>
-            </span>
+          <div className="mt-6 space-y-3">
+            <p className="text-center text-sm font-semibold text-foreground">
+              Internship Enrollment Payment QR Code
+            </p>
+            <p className="text-center text-xs leading-relaxed text-muted-foreground">
+              Scan the QR code using any UPI payment app. Works with Paytm, PhonePe, BHIM &amp; all
+              UPI apps <span className="font-medium text-foreground">except Google Pay</span> — we
+              do not accept payments via Google Pay.
+            </p>
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
+              <CheckCircle2 className="size-3.5 shrink-0 text-gold" />
+              <span>Refer to your Welcome Letter for the exact amount</span>
+            </div>
+            <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
+              Note: If you pay via any UPI app, the payment receiver may appear as either our
+              company name or an authorized person's name. Both are valid. Always verify the
+              recipient details before confirming your payment.
+            </p>
           </div>
-          <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
-            If the QR rotates while you're still paying, any amount already sent to the previous
-            QR is still credited to your order.
-          </p>
         </div>
       </div>
     </div>
   );
-
-  function qrListStatus(): "error" | "loading" | "ready" {
-    // Errors reach this component only through a failed rotation computation
-    // after load; the parent tracks the precise state separately.
-    return "error";
-  }
 }
 
-function OrderPanel({ amount, rotation }: { amount: number; rotation: RotationState }) {
-  const [form, setForm] = useState({ utr: "", phone: "" });
-  const [fieldErrors, setFieldErrors] = useState<{ utr?: string; phone?: string }>({});
+function OrderPanel({ rotation }: { rotation: RotationState }) {
+  const [form, setForm] = useState({
+    fullName: "",
+    email: "",
+    contactNumber: "",
+    position: "",
+    cohortDate: "",
+    batchCode: "",
+  });
+  const [screenshot, setScreenshot] = useState<File | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string | undefined>>({});
   const [pending, setPending] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [success, setSuccess] = useState<Extract<SubmitResult, { ok: true }> | null>(null);
   const [copied, setCopied] = useState(false);
   const submitPayment = useServerFn(submitPaymentConfirmation);
 
+  function updateField(key: keyof typeof form, value: string) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setSubmitError(null);
 
-    const errors: typeof fieldErrors = {};
-    if (!/^\d{12}$/.test(form.utr)) {
-      errors.utr = "UTR must be exactly 12 digits";
-    }
-    if (!/^[6-9]\d{9}$/.test(form.phone)) {
-      errors.phone = "Enter a valid 10-digit Indian mobile number";
-    }
+    const errors: Record<string, string | undefined> = {};
+    if (form.fullName.trim().length < 2) errors.fullName = "Enter your full name";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()))
+      errors.email = "Enter a valid email address";
+    if (!/^[6-9]\d{9}$/.test(form.contactNumber))
+      errors.contactNumber = "Enter a valid 10-digit Indian mobile number";
+    if (form.position.trim().length < 2)
+      errors.position = "Enter the internship position you applied for";
+    if (!form.cohortDate.trim()) errors.cohortDate = "Enter your cohort date";
+    if (!form.batchCode.trim()) errors.batchCode = "Enter the batch code from your Welcome Letter";
+    if (screenshot && screenshot.size > MAX_SCREENSHOT_BYTES)
+      errors.screenshot = "Screenshot must be under 10 MB";
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
     setPending(true);
     try {
+      let screenshotPath: string | undefined;
+      if (screenshot) {
+        const ext = (screenshot.name.split(".").pop() ?? "png").toLowerCase();
+        const safeExt = ["jpg", "jpeg", "png", "pdf"].includes(ext) ? ext : "png";
+        screenshotPath = `${crypto.randomUUID()}.${safeExt}`;
+        const { error: uploadError } = await supabase.storage
+          .from("enrollment-screenshots")
+          .upload(screenshotPath, screenshot);
+        if (uploadError) {
+          setSubmitError("Your screenshot couldn't be uploaded. Please try again.");
+          return;
+        }
+      }
+
       const result = await submitPayment({
         data: {
-          amount,
-          utr: form.utr,
-          payerPhone: form.phone,
+          fullName: form.fullName.trim(),
+          email: form.email.trim(),
+          contactNumber: form.contactNumber,
+          position: form.position.trim(),
+          cohortDate: form.cohortDate.trim(),
+          batchCode: form.batchCode.trim(),
+          screenshotPath,
           qrSlot: rotation?.current.id ?? "unknown",
         },
       });
@@ -307,9 +322,10 @@ function OrderPanel({ amount, rotation }: { amount: number; rotation: RotationSt
         setSubmitError(result.error);
       }
     } catch (err) {
-      if (err instanceof Error && /UTR|mobile/i.test(err.message)) {
-        if (/UTR/i.test(err.message)) setFieldErrors({ utr: err.message });
-        else setFieldErrors({ phone: err.message });
+      if (err instanceof Error && /mobile/i.test(err.message)) {
+        setFieldErrors({ contactNumber: err.message });
+      } else if (err instanceof Error && /email/i.test(err.message)) {
+        setFieldErrors({ email: err.message });
       } else {
         setSubmitError("Something went wrong. Please try again.");
       }
@@ -334,110 +350,169 @@ function OrderPanel({ amount, rotation }: { amount: number; rotation: RotationSt
       {success ? (
         <SuccessCard
           result={success}
-          amount={amount}
           copied={copied}
           onCopy={copyReference}
           onReset={() => {
             setSuccess(null);
-            setForm({ utr: "", phone: "" });
+            setForm({
+              fullName: "",
+              email: "",
+              contactNumber: "",
+              position: "",
+              cohortDate: "",
+              batchCode: "",
+            });
+            setScreenshot(null);
             setFieldErrors({});
           }}
         />
       ) : (
         <>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Order amount
-              </p>
-              <p className="mt-1 font-display text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
-                {formatAmount(amount)}
-              </p>
-            </div>
-            <span className="mt-1 flex items-center gap-1.5 rounded-full border border-gold/30 bg-gold/10 px-3 py-1.5 text-[11px] font-semibold text-gold">
-              <BadgeCheck className="size-3.5" />
-              Amount locked
-            </span>
-          </div>
-
-          <div className="mt-6 space-y-2 rounded-2xl border border-border bg-secondary/50 p-4 text-sm">
-            <p className="font-medium text-foreground">How to pay</p>
-            <ol className="list-inside list-decimal space-y-1 text-muted-foreground">
-              <li>Scan the QR with your UPI app and pay {formatAmount(amount)}.</li>
-              <li>Copy the 12-digit UTR from your payment receipt.</li>
-              <li>Enter the UTR and your phone number below to confirm.</li>
-            </ol>
-          </div>
+          <h2 className="font-display text-xl font-bold tracking-tight">
+            Share your enrollment details
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            After paying, fill in the details below. Sending these details with your payment
+            screenshot via <span className="font-semibold text-foreground">Email and WhatsApp</span>{" "}
+            is mandatory — the button below records your confirmation first.
+          </p>
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-5" noValidate>
-            <div>
-              <label htmlFor="utr" className="mb-2 block text-sm font-medium text-foreground">
-                UPI Transaction / UTR ID
-              </label>
-              <input
-                id="utr"
-                name="utr"
-                inputMode="numeric"
-                autoComplete="off"
-                maxLength={12}
-                placeholder="e.g. 402345678901"
-                value={form.utr}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, utr: e.target.value.replace(/\D/g, "").slice(0, 12) }))
+            <Field
+              id="fullName"
+              label="Full Name"
+              error={fieldErrors.fullName}
+              input={
+                <TextInput
+                  id="fullName"
+                  placeholder="e.g. Aarav Sharma"
+                  autoComplete="name"
+                  value={form.fullName}
+                  onChange={(v) => updateField("fullName", v)}
+                />
+              }
+            />
+
+            <Field
+              id="email"
+              label="Email ID"
+              error={fieldErrors.email}
+              input={
+                <TextInput
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  value={form.email}
+                  onChange={(v) => updateField("email", v)}
+                />
+              }
+            />
+
+            <Field
+              id="contactNumber"
+              label="Contact Number"
+              error={fieldErrors.contactNumber}
+              hint="Used only to confirm your enrollment — never shared or used for marketing."
+              input={
+                <div className="flex overflow-hidden rounded-xl border border-input bg-secondary/40 focus-within:border-gold/60 focus-within:ring-2 focus-within:ring-gold/30">
+                  <span className="flex items-center border-r border-input px-3 font-mono text-sm text-muted-foreground">
+                    +91
+                  </span>
+                  <input
+                    id="contactNumber"
+                    name="contactNumber"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                    maxLength={10}
+                    placeholder="9876543210"
+                    value={form.contactNumber}
+                    onChange={(e) =>
+                      updateField(
+                        "contactNumber",
+                        e.target.value.replace(/\D/g, "").slice(0, 10),
+                      )
+                    }
+                    className="w-full bg-transparent px-4 py-3 font-mono text-base tracking-[0.08em] text-foreground placeholder:font-sans placeholder:tracking-normal placeholder:text-muted-foreground focus:outline-none"
+                    aria-invalid={Boolean(fieldErrors.contactNumber)}
+                    aria-describedby={
+                      fieldErrors.contactNumber ? "contactNumber-error" : undefined
+                    }
+                  />
+                </div>
+              }
+            />
+
+            <Field
+              id="position"
+              label="Internship Position Applied For"
+              error={fieldErrors.position}
+              input={
+                <TextInput
+                  id="position"
+                  placeholder="e.g. Full Stack Development Intern"
+                  value={form.position}
+                  onChange={(v) => updateField("position", v)}
+                />
+              }
+            />
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field
+                id="cohortDate"
+                label="Cohort Date"
+                error={fieldErrors.cohortDate}
+                input={
+                  <TextInput
+                    id="cohortDate"
+                    placeholder="e.g. 15 Nov 2026"
+                    value={form.cohortDate}
+                    onChange={(v) => updateField("cohortDate", v)}
+                  />
                 }
-                className="w-full rounded-xl border border-input bg-secondary/40 px-4 py-3 font-mono text-base tracking-[0.12em] text-foreground placeholder:font-sans placeholder:tracking-normal placeholder:text-muted-foreground focus:border-gold/60 focus:outline-none focus:ring-2 focus:ring-gold/30"
-                aria-invalid={Boolean(fieldErrors.utr)}
-                aria-describedby={fieldErrors.utr ? "utr-error" : undefined}
               />
-              {fieldErrors.utr ? (
-                <p id="utr-error" className="mt-2 flex items-center gap-1.5 text-xs text-destructive">
-                  <AlertCircle className="size-3.5" /> {fieldErrors.utr}
-                </p>
-              ) : (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Find it in your UPI app receipt — exactly 12 digits.
-                </p>
-              )}
+              <Field
+                id="batchCode"
+                label="Batch Code"
+                hint="Mentioned in Welcome Letter"
+                error={fieldErrors.batchCode}
+                input={
+                  <TextInput
+                    id="batchCode"
+                    placeholder="e.g. WLB-2026-11"
+                    value={form.batchCode}
+                    onChange={(v) => updateField("batchCode", v)}
+                  />
+                }
+              />
             </div>
 
-            <div>
-              <label htmlFor="phone" className="mb-2 block text-sm font-medium text-foreground">
-                Payer phone number
-              </label>
-              <div className="flex overflow-hidden rounded-xl border border-input bg-secondary/40 focus-within:border-gold/60 focus-within:ring-2 focus-within:ring-gold/30">
-                <span className="flex items-center border-r border-input px-3 font-mono text-sm text-muted-foreground">
-                  +91
-                </span>
-                <input
-                  id="phone"
-                  name="phone"
-                  type="tel"
-                  inputMode="numeric"
-                  autoComplete="tel"
-                  maxLength={10}
-                  placeholder="9876543210"
-                  value={form.phone}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      phone: e.target.value.replace(/\D/g, "").slice(0, 10),
-                    }))
-                  }
-                  className="w-full bg-transparent px-4 py-3 font-mono text-base tracking-[0.08em] text-foreground placeholder:font-sans placeholder:tracking-normal placeholder:text-muted-foreground focus:outline-none"
-                  aria-invalid={Boolean(fieldErrors.phone)}
-                  aria-describedby={fieldErrors.phone ? "phone-error" : undefined}
-                />
-              </div>
-              {fieldErrors.phone ? (
-                <p id="phone-error" className="mt-2 flex items-center gap-1.5 text-xs text-destructive">
-                  <AlertCircle className="size-3.5" /> {fieldErrors.phone}
-                </p>
-              ) : (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Used only to match your payment — never shared or used for marketing.
-                </p>
-              )}
-            </div>
+            <Field
+              id="screenshot"
+              label="Payment Screenshot"
+              error={fieldErrors.screenshot}
+              hint="JPG, PNG or PDF up to 10 MB. Also send it via Email and WhatsApp after submitting."
+              input={
+                <label
+                  htmlFor="screenshot"
+                  className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-input bg-secondary/40 px-4 py-3 transition-colors hover:border-gold/50"
+                >
+                  <Upload className="size-4 shrink-0 text-gold" />
+                  <span className="min-w-0 truncate text-sm text-muted-foreground">
+                    {screenshot ? screenshot.name : "Upload your payment screenshot"}
+                  </span>
+                  <input
+                    id="screenshot"
+                    name="screenshot"
+                    type="file"
+                    accept="image/jpeg,image/png,application/pdf"
+                    className="sr-only"
+                    onChange={(e) => setScreenshot(e.target.files?.[0] ?? null)}
+                  />
+                </label>
+              }
+            />
 
             {submitError ? (
               <div
@@ -470,18 +545,109 @@ function OrderPanel({ amount, rotation }: { amount: number; rotation: RotationSt
         </>
       )}
 
-      <div className="mt-6 grid gap-2 sm:grid-cols-2">
-        <TrustBadge
-          icon={<ShieldCheck className="size-4 text-gold" />}
-          title="100% Payment Protected"
-          detail="by Wellaspire Technologies"
-        />
-        <TrustBadge
-          icon={<Lock className="size-4 text-gold" />}
-          title="256-bit Encrypted Checkout"
-          detail="TLS-secured end to end"
-        />
+      <ImportantNotice />
+    </div>
+  );
+}
+
+function Field({
+  id,
+  label,
+  hint,
+  error,
+  input,
+}: {
+  id: string;
+  label: string;
+  hint?: string;
+  error?: string;
+  input: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-2 block text-sm font-medium text-foreground">
+        {label}
+      </label>
+      {input}
+      {error ? (
+        <p id={`${id}-error`} className="mt-2 flex items-center gap-1.5 text-xs text-destructive">
+          <AlertCircle className="size-3.5" /> {error}
+        </p>
+      ) : hint ? (
+        <p className="mt-2 text-xs text-muted-foreground">{hint}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function TextInput({
+  id,
+  placeholder,
+  value,
+  onChange,
+  type = "text",
+  autoComplete,
+}: {
+  id: string;
+  placeholder?: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  autoComplete?: string;
+}) {
+  return (
+    <input
+      id={id}
+      name={id}
+      type={type}
+      autoComplete={autoComplete}
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-xl border border-input bg-secondary/40 px-4 py-3 text-base text-foreground placeholder:text-muted-foreground focus:border-gold/60 focus:outline-none focus:ring-2 focus:ring-gold/30"
+      aria-invalid={undefined}
+    />
+  );
+}
+
+function ImportantNotice() {
+  return (
+    <div className="mt-8 rounded-2xl border border-gold/25 bg-secondary/50 p-5">
+      <p className="flex items-center gap-2 font-display text-sm font-semibold uppercase tracking-[0.14em] text-gold">
+        <AlertCircle className="size-4" />
+        Important Notice — Enrollment Confirmation
+      </p>
+      <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+        After completing your enrollment, please share the required details and send your payment
+        screenshot to our support team via{" "}
+        <span className="font-semibold text-foreground">both Email and WhatsApp</span>. Once we
+        receive your details, we will send your confirmation email, login credentials and the
+        WhatsApp number of your dedicated mentor.
+      </p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <a
+          href="mailto:support@wellbridge.in"
+          className="flex items-center gap-2.5 rounded-xl border border-border bg-background/60 px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+        >
+          <Mail className="size-4 shrink-0 text-gold" />
+          support@wellbridge.in
+        </a>
+        <a
+          href="https://wa.me/919236642525"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2.5 rounded-xl border border-border bg-background/60 px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+        >
+          <MessageCircle className="size-4 shrink-0 text-gold" />
+          WhatsApp +91 92366 42525
+        </a>
       </div>
+      <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
+        Note: Complete your enrollment and confirm your seat as soon as possible — limited seats
+        are available. After payment you will receive a Payment Receipt, Confirmation Email and
+        Login Credentials to start your internship. Please ensure all information is accurate and
+        your payment screenshot is clearly visible to avoid delays.
+      </p>
     </div>
   );
 }
@@ -510,13 +676,11 @@ function TrustBadge({
 
 function SuccessCard({
   result,
-  amount,
   copied,
   onCopy,
   onReset,
 }: {
   result: Extract<SubmitResult, { ok: true }>;
-  amount: number;
   copied: boolean;
   onCopy: () => void;
   onReset: () => void;
@@ -526,11 +690,13 @@ function SuccessCard({
       <div className="flex size-16 items-center justify-center rounded-full bg-gold/15 ring-8 ring-gold/5">
         <CheckCircle2 className="size-9 text-gold" />
       </div>
-      <h2 className="mt-5 font-display text-2xl font-bold">Payment confirmation received</h2>
+      <h2 className="mt-5 font-display text-2xl font-bold">Enrollment details received</h2>
       <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-        Your payment of <span className="font-semibold text-foreground">{formatAmount(amount)}</span>{" "}
-        is being verified against the QR you scanned. You'll get a confirmation on your registered
-        number shortly.
+        Now send these details with your payment screenshot to{" "}
+        <span className="font-semibold text-foreground">support@wellbridge.in</span> and WhatsApp{" "}
+        <span className="font-semibold text-foreground">+91 92366 42525</span> — sending via both is
+        mandatory. You'll then receive your Payment Receipt, Confirmation Email and Login
+        Credentials.
       </p>
       <div className="mt-5 w-full rounded-2xl border border-border bg-secondary/50 p-4">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -554,7 +720,7 @@ function SuccessCard({
         className="mt-6 inline-flex items-center gap-2 rounded-xl border border-border px-5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
       >
         <RefreshCw className="size-4" />
-        Make another payment
+        Submit another enrollment
       </button>
     </div>
   );
@@ -567,6 +733,10 @@ function PageFooter() {
         <Smartphone className="size-3.5" />
         You'll never be asked for a UPI PIN on this page — approving the payment happens only
         inside your UPI app.
+      </p>
+      <p className="flex items-center gap-2">
+        <FileText className="size-3.5" />
+        For any queries, write to us at support@wellbridge.in
       </p>
       <p>© 2026 Wellaspire Technologies · Wellaspire Pay</p>
     </footer>
