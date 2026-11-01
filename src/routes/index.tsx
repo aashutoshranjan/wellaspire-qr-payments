@@ -118,6 +118,7 @@ function CheckoutGrid() {
     const istMs = Date.now() + IST_OFFSET_MS;
     const block = Math.floor(((((istMs / 3_600_000) % 24) + 24) % 24) / 3);
     const current = qrList.list[block % qrList.list.length];
+    if (!current) return null;
     return { block, current, total: qrList.list.length };
   }, [qrList]);
 
@@ -249,6 +250,16 @@ function EnrollmentIntro({
 }
 
 function OrderPanel({ rotation }: { rotation: RotationState }) {
+  type FieldKey =
+    | "fullName"
+    | "email"
+    | "contactNumber"
+    | "position"
+    | "cohortDate"
+    | "batchCode"
+    | "screenshot";
+  type FieldErrors = { [K in FieldKey]?: string };
+
   const [form, setForm] = useState({
     fullName: "",
     email: "",
@@ -258,7 +269,7 @@ function OrderPanel({ rotation }: { rotation: RotationState }) {
     batchCode: "",
   });
   const [screenshot, setScreenshot] = useState<File | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string | undefined>>({});
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [pending, setPending] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [success, setSuccess] = useState<Extract<SubmitResult, { ok: true }> | null>(null);
@@ -273,8 +284,7 @@ function OrderPanel({ rotation }: { rotation: RotationState }) {
     event.preventDefault();
     setSubmitError(null);
 
-    const errors: Record<string, string | undefined> = {};
-    if (form.fullName.trim().length < 2) errors.fullName = "Enter your full name";
+    const errors: FieldErrors = {};
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()))
       errors.email = "Enter a valid email address";
     if (!/^[6-9]\d{9}$/.test(form.contactNumber))
